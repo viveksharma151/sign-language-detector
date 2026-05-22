@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# elegant glassmorphic dark-mode CSS styling
+# Dark-mode dashboard styling
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -114,7 +114,7 @@ hr { border-color: rgba(255,255,255,0.08) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# target gestures supported
+# Gestures supported by the classifier
 GESTURES = ["A (Fist)", "B (Flat)", "C (Curved)", "L (Thumb+Index)", "V (Peace)", "Y (YMCA)", "Thumbs Up", "Open Hand"]
 
 GESTURE_DETAILS = {
@@ -128,8 +128,7 @@ GESTURE_DETAILS = {
     "Open Hand":       {"emoji": "👋", "color": "#f472b6", "label": "Open Hand (Number 5)"}
 }
 
-# ─── MediaPipe Tasks API setup ────────────────────────────────────────────────
-# hand skeleton connections - hardcoded since tasks api doesn't expose them directly
+# Skeleton connection maps
 _HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),       # thumb
     (0, 5), (5, 6), (6, 7), (7, 8),       # index
@@ -139,13 +138,12 @@ _HAND_CONNECTIONS = [
     (5, 9), (9, 13), (13, 17)             # palm base
 ]
 
-# google's official hand landmarker model url
 _MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 _MODEL_PATH = "hand_landmarker.task"
 
+# Load hand landmarker detector
 @st.cache_resource(show_spinner=False)
 def get_hand_landmarker():
-    # download model on first run (~8mb, cached by streamlit)
     if not os.path.exists(_MODEL_PATH):
         urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
 
@@ -159,7 +157,7 @@ def get_hand_landmarker():
     )
     return _mp_vision.HandLandmarker.create_from_options(opts)
 
-# ─── PyTorch Model Setup ─────────────────────────────────────────────────────
+# Simple MLP architecture for coordinate classification
 class HandGestureMLP(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(HandGestureMLP, self).__init__()
@@ -176,6 +174,7 @@ class HandGestureMLP(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+# Load PyTorch model weights if present
 @st.cache_resource(show_spinner=False)
 def load_mlp_model():
     model = HandGestureMLP(63, len(GESTURES))
@@ -196,12 +195,8 @@ with st.spinner("Initializing models..."):
     model, is_trained = load_mlp_model()
     landmarker = get_hand_landmarker()
 
-# ─── Landmark Processing ─────────────────────────────────────────────────────
+# Normalize joint coordinates relative to the wrist
 def get_landmark_coordinates(hand_lms_list):
-    """
-    takes a list of NormalizedLandmark objects (tasks api format).
-    normalizes all 21 landmarks relative to wrist (index 0) -> 63 features.
-    """
     wrist = hand_lms_list[0]
     coords = []
     for lm in hand_lms_list:
@@ -210,21 +205,17 @@ def get_landmark_coordinates(hand_lms_list):
         coords.append(lm.z - wrist.z)
     return np.array(coords, dtype=np.float32)
 
-# ─── Geometric Fallback Engine ───────────────────────────────────────────────
+# Geometric fallback rules for out-of-the-box support
 def fallback_geometry_classifier(hand_lms_list):
-    """
-    mathematical fallback that uses finger extension geometry.
-    works even without any trained weights - pure coordinate math!
-    """
-    lm = hand_lms_list  # plain list of NormalizedLandmark objects
+    lm = hand_lms_list
 
-    # finger extension: tip y < pip y means finger is pointing up
+    # Check which fingers are extended (tip Y coordinate < joint Y coordinate)
     index_up  = lm[8].y < lm[6].y
     middle_up = lm[12].y < lm[10].y
     ring_up   = lm[16].y < lm[14].y
     pinky_up  = lm[20].y < lm[18].y
 
-    # thumb extension checks
+    # Check thumb extension
     thumb_up  = lm[4].y < lm[3].y and lm[4].y < lm[5].y
     thumb_out = abs(lm[4].x - lm[9].x) > abs(lm[3].x - lm[9].x)
 
@@ -248,9 +239,8 @@ def fallback_geometry_classifier(hand_lms_list):
 
     return "C (Curved)", 88.0
 
-# ─── Inference Routines ──────────────────────────────────────────────────────
+# Render skeletal layout overlay
 def draw_hand_skeleton(frame, hand_lms_list, h, w):
-    # draw connections
     for start_idx, end_idx in _HAND_CONNECTIONS:
         start = hand_lms_list[start_idx]
         end   = hand_lms_list[end_idx]
@@ -258,16 +248,15 @@ def draw_hand_skeleton(frame, hand_lms_list, h, w):
                  (int(start.x * w), int(start.y * h)),
                  (int(end.x * w),   int(end.y * h)),
                  (0, 220, 130), 2)
-    # draw landmark dots
     for lm in hand_lms_list:
         cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 4, (255, 90, 20), -1)
 
+# Main inference pipeline
 def process_frame(img):
-    # PIL image is already RGB - convert to numpy
     frame = np.array(img)
     h, w = frame.shape[:2]
 
-    # wrap in mediapipe Image object for tasks api
+    # Convert frame to MediaPipe Image
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
     result = landmarker.detect(mp_image)
 
@@ -278,14 +267,10 @@ def process_frame(img):
 
     if result.hand_landmarks:
         for hand_lms_list in result.hand_landmarks:
-            # draw skeleton overlay
             draw_hand_skeleton(annotated_frame, hand_lms_list, h, w)
-
-            # extract 63-feature coordinate vector
             features = get_landmark_coordinates(hand_lms_list)
 
             if is_trained:
-                # run pytorch mlp forward pass
                 tensor = torch.tensor(features).unsqueeze(0)
                 with torch.no_grad():
                     out  = model(tensor)
@@ -295,7 +280,6 @@ def process_frame(img):
                 prediction = GESTURES[pred_idx]
                 confidence = probabilities[pred_idx]
             else:
-                # run spatial geometric fallback engine
                 prediction, confidence = fallback_geometry_classifier(hand_lms_list)
                 idx = GESTURES.index(prediction)
                 probabilities[idx] = confidence
@@ -303,12 +287,11 @@ def process_frame(img):
                 for i in range(len(GESTURES)):
                     if i != idx:
                         probabilities[i] = remaining
-
-            break  # single hand only
+            break
 
     return annotated_frame, prediction, confidence, probabilities
 
-# ─── Visualizations ──────────────────────────────────────────────────────────
+# Plotly visualization gauges and horizontal bars
 def make_gauge_chart(score, label):
     style = GESTURE_DETAILS.get(label, GESTURE_DETAILS["Open Hand"])
     fig = go.Figure(go.Indicator(
@@ -365,7 +348,7 @@ def make_probs_chart(probs):
 if "gesture_history" not in st.session_state:
     st.session_state.gesture_history = []
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
+# Sidebar UI
 with st.sidebar:
     st.markdown("""
     <div style='text-align:center; padding:1rem 0 0.5rem;'>
@@ -390,7 +373,7 @@ with st.sidebar:
 
     st.divider()
 
-    # session summary
+    # Track metrics in sidebar
     history = st.session_state.gesture_history
     total_runs = len(history)
     if total_runs > 0:
@@ -420,13 +403,12 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Main UI ──────────────────────────────────────────────────────────────────
+# Main UI layout
 st.markdown("<div class='main-title'>🤟 Sign Language Interpreter</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-title'>Real-time Hand Landmark skeletal tracking &amp; spatial gesture classification</div>", unsafe_allow_html=True)
 
 tab_run, tab_signs, tab_history = st.tabs(["📷 Camera Feed", "📖 Supported Gestures", "📈 Performance Logs"])
 
-# camera tab
 with tab_run:
     left, right = st.columns([1, 1.2], gap="large")
 
@@ -481,7 +463,6 @@ with tab_run:
             </div>
             """, unsafe_allow_html=True)
 
-# supported gestures tab
 with tab_signs:
     st.markdown("### 📖 Standardized Supported Signs")
 
@@ -542,7 +523,6 @@ with tab_signs:
         </div>
         """, unsafe_allow_html=True)
 
-# performance logs tab
 with tab_history:
     if not history:
         st.markdown("""
@@ -596,7 +576,7 @@ with tab_history:
                 </div>
                 """, unsafe_allow_html=True)
 
-# footer
+# Footer info
 st.markdown("""
 <hr style='border-color:rgba(255,255,255,0.05); margin-top:2.5rem;'>
 <div style='text-align:center; color:rgba(255,255,255,0.18); font-size:0.75rem; padding-bottom:1rem;'>

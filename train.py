@@ -5,24 +5,19 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 
-# quick settings
+# Training settings
 BATCH_SIZE = 32
 LR = 0.001
 EPOCHS = 20
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# we use 21 hand landmarks * 3 coordinates (x, y, z) = 63 input features
+# 21 landmarks (x, y, z) = 63 inputs
 INPUT_SIZE = 63
-# we classify 10 common gestures/letters: A, B, C, D, L, O, U, V, W, Y
 CLASSES = ["A", "B", "C", "D", "L", "O", "U", "V", "W", "Y"]
 NUM_CLASSES = len(CLASSES)
 
+# Feedforward MLP for classification
 class HandGestureMLP(nn.Module):
-    """
-    simple feedforward neural network.
-    since we are classifying 63 coordinate values instead of raw pixels,
-    we don't need a heavy CNN. an MLP is lightning fast and highly accurate!
-    """
     def __init__(self, input_dim, output_dim):
         super(HandGestureMLP, self).__init__()
         self.network = nn.Sequential(
@@ -38,10 +33,9 @@ class HandGestureMLP(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+# Custom dataset loader for landmark files
 class GestureDataset(Dataset):
     def __init__(self, data_path):
-        # expects a saved numpy array of shape (N, 63) for features and (N,) for labels
-        # we provide a script structure so users can easily record their own gestures
         self.features = np.load(os.path.join(data_path, "features.npy")).astype(np.float32)
         self.labels = np.load(os.path.join(data_path, "labels.npy")).astype(np.int64)
 
@@ -56,16 +50,16 @@ def main():
     
     if not os.path.exists(data_dir) or not os.path.exists(os.path.join(data_dir, "features.npy")):
         print(f"Data directory not found at {data_dir}.")
-        print("To train this model locally:")
-        print("  1. Create a data collection loop to save MediaPipe landmark coordinates.")
-        print("  2. Save them as 'features.npy' and 'labels.npy' in the recorded_data folder.")
-        print("  3. Run this training script to compile 'gesture_model.pth'.")
+        print("To train custom gestures:")
+        print("  1. Capture joint coordinates via MediaPipe.")
+        print("  2. Save features.npy and labels.npy inside recorded_data/.")
+        print("  3. Run this script to export gesture_model.pth.")
         return
 
-    print("Loading landmark datasets...")
+    print("Loading datasets...")
     dataset = GestureDataset(data_dir)
     
-    # train-val split (80-20)
+    # 80-20 train/validation split
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_set, val_set = torch.utils.data.random_split(dataset, [train_size, val_size])
@@ -79,7 +73,7 @@ def main():
 
     best_val_acc = 0.0
 
-    print("Starting training...")
+    print("Training model...")
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0.0
@@ -103,7 +97,7 @@ def main():
         t_loss = train_loss / len(train_set)
         t_acc = correct / total
 
-        # val loop
+        # Validation loop
         model.eval()
         val_loss = 0.0
         val_correct = 0
@@ -128,9 +122,9 @@ def main():
         if v_acc > best_val_acc:
             best_val_acc = v_acc
             torch.save(model.state_dict(), "gesture_model.pth")
-            print("=> Saved best model weights!")
+            print("=> Saved new best model weights!")
 
-    print(f"Finished training. Best Val Accuracy: {best_val_acc*100:.2f}%")
+    print(f"Finished. Best Val Accuracy: {best_val_acc*100:.2f}%")
 
 if __name__ == "__main__":
     main()
