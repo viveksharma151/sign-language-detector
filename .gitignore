@@ -1,0 +1,19 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# environments
+venv/
+.venv/
+env/
+
+# deep learning files
+recorded_data/
+*.pth
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
