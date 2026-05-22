@@ -126,8 +126,18 @@ GESTURE_DETAILS = {
 }
 
 # ─── MediaPipe initialization ────────────────────────────────────────────────
-mp_hands = mp.solutions.hands
-mp_draw = mp.solutions.drawing_utils
+try:
+    import mediapipe.python.solutions.hands as mp_hands
+    import mediapipe.python.solutions.drawing_utils as mp_draw
+except Exception:
+    try:
+        from mediapipe.solutions import hands as mp_hands
+        from mediapipe.solutions import drawing_utils as mp_draw
+    except Exception:
+        import mediapipe as mp
+        mp_hands = mp.solutions.hands
+        mp_draw = mp.solutions.drawing_utils
+
 
 # cache hands detector so we don't spin it up every loop execution
 @st.cache_resource
