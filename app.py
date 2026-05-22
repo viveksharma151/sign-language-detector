@@ -1,6 +1,8 @@
 import streamlit as st
 import cv2
-import mediapipe as mp
+from mediapipe.solutions.hands import Hands as _MpHands
+from mediapipe.solutions.hands import HAND_CONNECTIONS as _HAND_CONNECTIONS
+from mediapipe.solutions.drawing_utils import draw_landmarks as _draw_landmarks
 import numpy as np
 import torch
 import torch.nn as nn
@@ -126,23 +128,12 @@ GESTURE_DETAILS = {
 }
 
 # ─── MediaPipe initialization ────────────────────────────────────────────────
-try:
-    import mediapipe.python.solutions.hands as mp_hands
-    import mediapipe.python.solutions.drawing_utils as mp_draw
-except Exception:
-    try:
-        from mediapipe.solutions import hands as mp_hands
-        from mediapipe.solutions import drawing_utils as mp_draw
-    except Exception:
-        import mediapipe as mp
-        mp_hands = mp.solutions.hands
-        mp_draw = mp.solutions.drawing_utils
-
+# using direct class imports instead of mp.solutions namespace (more reliable on cloud)
 
 # cache hands detector so we don't spin it up every loop execution
 @st.cache_resource
 def get_mp_hands():
-    return mp_hands.Hands(
+    return _MpHands(
         static_image_mode=False,
         max_num_hands=1,
         min_detection_confidence=0.5,
@@ -270,7 +261,7 @@ def process_frame(img):
     if results.multi_hand_landmarks:
         for hand_lms in results.multi_hand_landmarks:
             # draw skeletons on image
-            mp_draw.draw_landmarks(annotated_frame, hand_lms, mp_hands.HAND_CONNECTIONS)
+            _draw_landmarks(annotated_frame, hand_lms, _HAND_CONNECTIONS)
             
             # calculate coordinate values
             features = get_landmark_coordinates(hand_lms, w, h)
